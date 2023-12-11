@@ -1,0 +1,273 @@
+---
+title: "STAT209 Final Project: CRE + Lin's Estimator"
+output: pdf_document
+date: "2023-12-08"
+---
+```{r}
+library(causaldata)
+library(stargazer)
+library(sandwich)
+library(ggplot2)
+library(optmatch)
+library(DOS2)
+library(RItools)
+library(gridExtra)
+data(nsw_mixtape)
+nsw_mixtape = as.data.frame(nsw_mixtape)
+```
+
+```{r}
+nsw_mixtape$y = nsw_mixtape$re78 - nsw_mixtape$re75
+head(nsw_mixtape)
+```
+
+# Generalized Lin's estimator include re74 and re75, outcome: re78 - re75
+# Analyze as CRE, SRE, Lin's estimator
+
+# CRE
+
+```{r}
+diff_means_stat = function(data) {
+  return(mean(data[data$treat == 1, "y"]) - mean(data[data$treat == 0, "y"]))
+}
+observed_stat = diff_means_stat(nsw_mixtape)
+print(observed_stat)
+
+z = nsw_mixtape$treat
+nsw_mixtape_perm = nsw_mixtape
+MC = 10^4
+linear_stat_hat = rep(0 , MC)
+for (mc in 1: MC) {
+  zperm = sample(z)
+  nsw_mixtape_perm$"treat" = zperm
+  linear_stat_hat[mc] = linear_stat(nsw_mixtape_perm)
+}
+mean(linear_stat_hat >= observed_stat)
+```
+
+```{r}
+ggplot(as.data.frame(linear_stat_hat), aes(x = linear_stat_hat)) +
+  # Add the histogram layer with density instead of frequency
+  geom_histogram(aes(y = ..density..),  bins=30, fill = "lightblue", color = "black") +
+  # Add a vertical line for the observed value
+  geom_vline(xintercept = observed_stat, linetype = "dashed", color = "red", size = 1) +
+  # Add labels and theme customization
+  labs(title = "Distribution of Permutation Test Statistic",
+       x = "Test Statistic",
+       y = "Density") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  annotate("text", x = observed_stat + 450, y = 6e-4, label = "Observed Statistic", color = "red", size = 3)
+```
+
+# V_hat:
+```{r}
+treat = nsw_mixtape[nsw_mixtape$treat == 1, "y"]
+cont = nsw_mixtape[nsw_mixtape$treat == 0, "y"]
+n_1 = length(treat)
+n_0 = length(cont)
+
+s_hat_1 = 1 / (n_1 - 1) * sum((treat - mean(treat))^2)
+s_hat_0 = 1 / (n_0 - 1) * sum((cont - mean(cont))^2)
+
+v_hat = s_hat_1 / (n_1) + s_hat_0 / (n_0)
+v_hat
+```
+
+# 95% CI
+
+```{r}
+observed_stat + 1.96 * sqrt(v_hat)
+observed_stat - 1.96 * sqrt(v_hat)
+```
+
+# Lin's estimator:
+
+```{r}
+library(estimatr)
+Y = nsw_mixtape$"y"
+Z = nsw_mixtape$treat
+X = model.matrix(~ age + educ + black + hisp + marr + nodegree + re74 + re75, data=nsw_mixtape)[, -1]
+X = scale(X, center=TRUE, scale=FALSE)
+
+sfp_fit = lm_robust(Y ~ Z + X + X * Z)
+summary(sfp_fit)
+tau_I = coef(sfp_fit)["Z"]
+print(tau_I)
+```
+
+```{r}
+library(texreg)
+texreg(sfp_fit, include.ci = FALSE)
+```
+
+# Generalized Lin's estimator:
+
+```{r}
+library(randomForest)
+
+# SFP
+idx_1 = sample(seq.int(nrow(nsw_mixtape)), nrow(nsw_mixtape) / 2)
+nsw_mixtape[idx_1, "subset"] = 1
+nsw_mixtape[-idx_1, "subset"] = 2
+nsw_mixtape_1 = nsw_mixtape[nsw_mixtape$"subset" == 1, ]
+nsw_mixtape_2 = nsw_mixtape[nsw_mixtape$"subset" == 2, ]
+
+nsw_mixtape_treat_1 = nsw_mixtape_1[nsw_mixtape_1$treat == 1, ]
+nsw_mixtape_control_1 = nsw_mixtape_1[nsw_mixtape_1$treat == 0, ]
+nsw_mixtape_treat_2 = nsw_mixtape_2[nsw_mixtape_2$treat == 1, ]
+nsw_mixtape_control_2 = nsw_mixtape_2[nsw_mixtape_2$treat == 0, ]
+
+nsw_mixtape_X = model.matrix(~ age + educ + black + hisp + marr + 
+                               nodegree + re74 + re75, data=nsw_mixtape)[, -1]
+
+nsw_mixtape_X_1 = model.matrix(~ age + educ + black + hisp + marr + 
+                               nodegree + re74 + re75, data=nsw_mixtape_1)[, -1]
+nsw_mixtape_X_treat_1 = model.matrix(~ age + educ + black + hisp + marr + 
+                               nodegree + re74 + re75, data=nsw_mixtape_treat_1)[, -1]
+nsw_mixtape_X_control_1 = model.matrix(~ age + educ + black + hisp + marr + 
+                               nodegree + re74 + re75, data=nsw_mixtape_control_1)[, -1]
+
+nsw_mixtape_X_2 = model.matrix(~ age + educ + black + hisp + marr + 
+                               nodegree + re74 + re75, data=nsw_mixtape_2)[, -1]
+nsw_mixtape_X_treat_2 = model.matrix(~ age + educ + black + hisp + marr + 
+                               nodegree + re74 + re75, data=nsw_mixtape_treat_2)[, -1]
+nsw_mixtape_X_control_2 = model.matrix(~ age + educ + black + hisp + marr + 
+                               nodegree + re74 + re75, data=nsw_mixtape_control_2)[, -1]
+
+nsw_mixtape_Y_1 = nsw_mixtape_1$"y"
+nsw_mixtape_Y_treat_1 = nsw_mixtape_treat_1$"y"
+nsw_mixtape_Y_control_1 = nsw_mixtape_control_1$"y"
+nsw_mixtape_Y_2 = nsw_mixtape_2$"y"
+nsw_mixtape_Y_treat_2 = nsw_mixtape_treat_2$"y"
+nsw_mixtape_Y_control_2 = nsw_mixtape_control_2$"y"
+
+rf_model_nsw_treat_1 = randomForest(nsw_mixtape_X_treat_1, y=nsw_mixtape_Y_treat_1)
+rf_model_nsw_control_1 = randomForest(nsw_mixtape_X_control_1, y=nsw_mixtape_Y_control_1)
+rf_model_nsw_treat_2 = randomForest(nsw_mixtape_X_treat_2, y=nsw_mixtape_Y_treat_2)
+rf_model_nsw_control_2 = randomForest(nsw_mixtape_X_control_2, y=nsw_mixtape_Y_control_2)
+
+# Predict each model on all NSW data
+mu_nsw_hat_treat_1 = predict(rf_model_nsw_treat_1, nsw_mixtape_X)
+mu_nsw_hat_control_1 = predict(rf_model_nsw_control_1, nsw_mixtape_X)
+mu_nsw_hat_treat_2 = predict(rf_model_nsw_treat_2, nsw_mixtape_X)
+mu_nsw_hat_control_2 = predict(rf_model_nsw_control_2, nsw_mixtape_X)
+
+# Prediction model on training subsets
+mu_nsw_hat_treat_1_ss_1 = predict(rf_model_nsw_treat_1, nsw_mixtape_X_treat_1)
+mu_nsw_hat_control_1_ss_1 = predict(rf_model_nsw_control_1, nsw_mixtape_X_control_1)
+mu_nsw_hat_treat_2_ss_2 = predict(rf_model_nsw_treat_2, nsw_mixtape_X_treat_2)
+mu_nsw_hat_control_2_ss_2 = predict(rf_model_nsw_control_2, nsw_mixtape_X_control_2)
+
+# Calibration
+mu_nsw_tilde_treat_1 = mu_nsw_hat_treat_1 + (1 / nrow(nsw_mixtape_treat_1)) * 
+  sum(nsw_mixtape_Y_treat_1 - mu_nsw_hat_treat_1_ss_1)
+
+mu_nsw_tilde_control_1 = mu_nsw_hat_control_1 + (1 / nrow(nsw_mixtape_control_1)) * 
+  sum(nsw_mixtape_Y_control_1 - mu_nsw_hat_control_1_ss_1)
+
+mu_nsw_tilde_treat_2 = mu_nsw_hat_treat_2 + (1 / nrow(nsw_mixtape_treat_2)) * 
+  sum(nsw_mixtape_Y_treat_2 - mu_nsw_hat_treat_2_ss_2)
+
+mu_nsw_tilde_control_2 = mu_nsw_hat_control_2 + (1 / nrow(nsw_mixtape_control_2)) * 
+  sum(nsw_mixtape_Y_control_2 - mu_nsw_hat_control_2_ss_2)
+
+nsw_mixtape[, "mu_nsw_tilde_treat_1"] = mu_nsw_tilde_treat_1
+nsw_mixtape[, "mu_nsw_tilde_control_1"] = mu_nsw_tilde_control_1
+nsw_mixtape[, "mu_nsw_tilde_treat_2"] = mu_nsw_tilde_treat_2
+nsw_mixtape[, "mu_nsw_tilde_control_2"] = mu_nsw_tilde_control_2
+
+mu_tilde_nsw_control_model_2_1 = nsw_mixtape[
+  (nsw_mixtape["subset"] == 1) & (nsw_mixtape["treat"] == 0), 
+  "mu_nsw_tilde_treat_2"]
+mu_tilde_nsw_treat_model_2_1 = nsw_mixtape[
+  (nsw_mixtape["subset"] == 1) & (nsw_mixtape["treat"] == 1), 
+  "mu_nsw_tilde_control_2"]
+
+mu_tilde_nsw_control_model_1_2 = nsw_mixtape[
+  (nsw_mixtape["subset"] == 2) & (nsw_mixtape["treat"] == 0), 
+  "mu_nsw_tilde_treat_1"]
+mu_tilde_nsw_treat_model_1_2 = nsw_mixtape[
+  (nsw_mixtape["subset"] == 2) & (nsw_mixtape["treat"] == 1), 
+  "mu_nsw_tilde_control_1"]
+
+tau_hat_1 = (1 / nrow(nsw_mixtape_1)) * 
+  (sum(nsw_mixtape_Y_treat_1) + sum(mu_tilde_nsw_control_model_2_1)) -
+  (1 / nrow(nsw_mixtape_1)) * 
+  (sum(nsw_mixtape_Y_control_1) + sum(mu_tilde_nsw_treat_model_2_1))
+
+tau_hat_2 = (1 / nrow(nsw_mixtape_2)) * 
+  (sum(nsw_mixtape_Y_treat_2) + sum(mu_tilde_nsw_control_model_1_2)) -
+  (1 / nrow(nsw_mixtape_2)) * 
+  (sum(nsw_mixtape_Y_control_2) + sum(mu_tilde_nsw_treat_model_1_2))
+
+tau_hat_pred_nsw = (nrow(nsw_mixtape_1) / nrow(nsw_mixtape)) * 
+  tau_hat_1 + 
+  (nrow(nsw_mixtape_2) / nrow(nsw_mixtape)) * tau_hat_2
+
+print(tau_hat_pred_nsw)
+```
+
+```{r}
+n_1_1 = nrow(nsw_mixtape_X_treat_1)
+n_0_1 = nrow(nsw_mixtape_X_control_1)
+n_1_2 = nrow(nsw_mixtape_X_treat_2)
+n_0_2 = nrow(nsw_mixtape_X_control_2)
+
+sigma_hat_nsw_treat_1 = 1 / (n_1_1 - 1) * 
+  sum((nsw_mixtape_Y_treat_1 - nsw_mixtape[
+    (nsw_mixtape["treat"] == 1) & (nsw_mixtape["subset"] == 1), 
+    "mu_nsw_tilde_treat_2"])^2)
+sigma_hat_nsw_control_1 = 1 / (n_0_1 - 1) * 
+  sum((nsw_mixtape_Y_control_1 - nsw_mixtape[
+    (nsw_mixtape["treat"] == 0) & (nsw_mixtape["subset"] == 1),
+    "mu_nsw_tilde_control_2"])^2)
+
+sigma_hat_nsw_treat_2 = 1 / (n_1_2 - 1) * 
+  sum((nsw_mixtape_Y_treat_2 - nsw_mixtape[
+    (nsw_mixtape["treat"] == 1) & (nsw_mixtape["subset"] == 2), 
+    "mu_nsw_tilde_treat_1"])^2)
+sigma_hat_nsw_control_2 = 1 / (n_0_2 - 1) * sum(
+  (nsw_mixtape_Y_control_2 - nsw_mixtape[
+    (nsw_mixtape["treat"] == 0) & (nsw_mixtape["subset"] == 2), 
+    "mu_nsw_tilde_control_1"])^2)
+
+sigma_hat_nsw_tau_1 = 1 / (nrow(nsw_mixtape_1)) * 
+  sum((nsw_mixtape[(nsw_mixtape["subset"] == 1), "mu_nsw_tilde_treat_2"] - 
+  nsw_mixtape[(nsw_mixtape["subset"] == 1), "mu_nsw_tilde_control_2"] - 
+  mean(nsw_mixtape[(nsw_mixtape["subset"] == 1), "mu_nsw_tilde_treat_2"]) +
+  mean(nsw_mixtape[(nsw_mixtape["subset"] == 1), "mu_nsw_tilde_control_2"]))^2)
+
+sigma_hat_nsw_tau_2 = 1 / (nrow(nsw_mixtape_2)) * 
+  sum((nsw_mixtape[(nsw_mixtape["subset"] == 2), "mu_nsw_tilde_treat_1"] - 
+  nsw_mixtape[(nsw_mixtape["subset"] == 2), "mu_nsw_tilde_control_1"] - 
+  mean(nsw_mixtape[(nsw_mixtape["subset"] == 2), "mu_nsw_tilde_treat_1"]) +
+  mean(nsw_mixtape[(nsw_mixtape["subset"] == 2), "mu_nsw_tilde_control_1"]))^2)
+
+v_hat_nsw_1 = (1 / n_1_1) * 
+  sigma_hat_nsw_treat_1 + (1 / n_0_1) * 
+  sigma_hat_nsw_control_1 + (1 / nrow(nsw_mixtape_1)) * sigma_hat_nsw_tau_1
+
+# v_hat_sfp_1 = 1 / nrow(sfp_data[sfp_data["control"] == 0, ]) * 
+#  sigma_hat_sfp_treat_1 + 1 / nrow(sfp_data[sfp_data["control"] == 1, ]) * 
+#   sigma_hat_sfp_control_1 + 1 / nrow(sfp_data) * sigma_hat_sfp_tau_1
+
+v_hat_nsw_2 = (1 / n_1_2) * 
+  sigma_hat_nsw_treat_1 + (1 / n_0_2) * 
+  sigma_hat_nsw_control_1 + (1 / nrow(nsw_mixtape_1)) * sigma_hat_nsw_tau_1
+
+# v_hat_sfp_2 = 1 / nrow(sfp_data[sfp_data["control"] == 0, ]) * 
+#   sigma_hat_sfp_treat_2 + 1 / nrow(sfp_data[sfp_data["control"] == 1, ]) * 
+#   sigma_hat_sfp_control_2 + 1 / nrow(sfp_data) * sigma_hat_sfp_tau_2
+
+v_hat_nsw_pred = (nrow(nsw_mixtape_1) / nrow(nsw_mixtape))^2 * v_hat_nsw_1 + 
+  (nrow(nsw_mixtape_2) / nrow(nsw_mixtape))^2 * v_hat_nsw_2
+print(v_hat_nsw_pred)
+```
+
+```{r}
+left_bound = tau_hat_pred_nsw - 1.96 * sqrt(v_hat_nsw_pred)
+right_bound = tau_hat_pred_nsw+ 1.96 * sqrt(v_hat_nsw_pred)
+print(left_bound)
+print(right_bound)
+```
