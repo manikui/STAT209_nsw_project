@@ -1,0 +1,143 @@
+---
+title: "project 209"
+author: "Haoyu Liu"
+date: "2023-12-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(causaldata)
+data(nsw_mixtape)
+nsw_mixtape = nsw_mixtape[nsw_mixtape["re75"]>0,]
+head(nsw_mixtape)
+nsw_mixtape$re78_re75_diff = nsw_mixtape$re78 - nsw_mixtape$re75
+summary(nsw_mixtape)
+```
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(ggplot2)
+
+# Check for missing values
+sum(is.na(nsw_mixtape))
+
+```
+
+
+```{r, fig.width=6, fig.height=4}
+# Setting up the plotting area for 5 histograms (continuous variables)
+par(mfrow = c(2, 3))  # 3 rows, 2 columns
+
+# Histograms for continuous variables
+hist(nsw_mixtape$age, main = "Histogram of Age", xlab = "Age")
+hist(nsw_mixtape$educ, main = "Histogram of Education", xlab = "Education Years")
+hist(nsw_mixtape$re74, main = "Histogram of Re74", xlab = "Re74")
+hist(nsw_mixtape$re75, main = "Histogram of Re75", xlab = "Re75")
+hist(nsw_mixtape$re78, main = "Histogram of Re78", xlab = "Re78")
+hist(nsw_mixtape$re78_re75_diff, main = "Histogram of re78_re75_diff", xlab = "re78_re75_diff")
+```
+
+
+
+```{r, fig.width=6, fig.height=2}
+# Setting up the plotting area for 5 bar plots (categorical variables)
+par(mfrow = c(1, 4))  # 3 rows, 2 columns
+
+# Bar plots for categorical variables
+barplot(table(nsw_mixtape$black), main = "Bar Plot of Black", xlab = "Black", ylab = "Count")
+barplot(table(nsw_mixtape$hisp), main = "Bar Plot of Hispanic", xlab = "Hispanic", ylab = "Count")
+barplot(table(nsw_mixtape$marr), main = "Bar Plot of Married", xlab = "Married", ylab = "Count")
+barplot(table(nsw_mixtape$nodegree), main = "Bar Plot of No Degree", xlab = "No Degree", ylab = "Count")
+
+# Resetting to default plotting area
+par(mfrow = c(1, 1))
+```
+
+
+```{r, fig.width=7, fig.height=4}
+par(mfrow = c(1, 3)) 
+# Bivariate Analysis: Boxplots and correlation for continuous variables
+boxplot(re78_re75_diff ~ treat, data = nsw_mixtape, main = "re78_re75_diff by Treatment", xlab = "Treatment", ylab = "re78_re75_diff")
+boxplot(re78_re75_diff ~ black, data = nsw_mixtape, main = "re78_re75_diff by Black", xlab = "Black", ylab = "re78_re75_diff")
+boxplot(re78_re75_diff ~ hisp, data = nsw_mixtape, main = "re78_re75_diff by Hispanic", xlab = "Hispanic", ylab = "re78_re75_diff")
+```
+
+
+
+
+
+
+
+```{r}
+library(dplyr)
+
+nsw_mixtape$stratum <- with(nsw_mixtape, 
+                            ifelse(age <= median(age) & educ <= median(educ), 1,
+                            ifelse(age > median(age) & educ <= median(educ), 2,
+                            ifelse(age <= median(age) & educ > median(educ), 3, 4))))
+
+# Analyzing the effect of treatment within each stratum using re78_re75_diff as the outcome
+stratified_analysis <- nsw_mixtape %>%
+    group_by(stratum, treat) %>%
+    summarise(
+        mean_diff = mean(re78_re75_diff, na.rm = TRUE),
+        median_diff = median(re78_re75_diff, na.rm = TRUE),
+        n = n(),
+        .groups = 'drop'  # Drop the grouping structure after summarizing
+    )
+
+
+print(stratified_analysis)
+
+
+
+
+```
+
+
+
+```{r}
+df <- stratified_analysis
+# Splitting the data into treatment and control groups
+treatment_group <- subset(df, treat == 1)
+control_group <- subset(df, treat == 0)
+
+# Merging treatment and control groups by stratum
+merged_df <- merge(treatment_group, control_group, by = "stratum")
+
+# Calculate treatment effect for each stratum
+merged_df$tau_stratum <- merged_df$mean_diff.x - merged_df$mean_diff.y
+
+# Calculate the weighted average treatment effect (tau)
+tau <- sum(merged_df$tau_stratum * merged_df$n.x) / sum(merged_df$n.x)
+
+# Calculate the variance of treatment effects
+tau_variance <- sum(((merged_df$tau_stratum - tau)^2 * merged_df$n.x) / sum(merged_df$n.x))
+# tau_variance_n.y <- sum(((merged_df$tau_stratum - tau)^2 * merged_df$n.y) / sum(merged_df$n.y))
+# Output the results
+cat("The weighted average treatment effect (tau) is:", tau, "\n")
+cat("The variance of the treatment effect (tau) is:", tau_variance, "\n")
+
+# Calculating the standard deviation of tau
+std_tau <- sqrt(tau_variance)
+
+# Calculating the 95% confidence interval for tau
+z_score <- 1.96  # Z-score for 95% confidence
+margin_of_error <- z_score * std_tau
+
+lower_bound <- tau - margin_of_error
+upper_bound <- tau + margin_of_error
+
+# Output the confidence interval
+cat("tau and sd", tau, "and", std_tau, "\n")
+cat("The 95% confidence interval for tau is between", lower_bound, "and", upper_bound, "\n")
+
+```
+
+
